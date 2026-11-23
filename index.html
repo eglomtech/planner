@@ -17,6 +17,68 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script>
+/* =====================================================================
+   FIREBASE — email/password accounts + Firestore cloud storage
+   Loaded lazily with import() so the planner still opens if Firebase can't be reached.
+   Exposes window.ypCloud for the planner code below.
+   ===================================================================== */
+(function(){
+  var BASE = 'https://www.gstatic.com/firebasejs/13.3.0/';
+  var firebaseConfig = {
+    apiKey: "AIzaSyD4d1Z79b36n1J23SRhEUWqXQiLZqPTrVA",
+    authDomain: "year-planner-5dc5e.firebaseapp.com",
+    projectId: "year-planner-5dc5e",
+    storageBucket: "year-planner-5dc5e.firebasestorage.app",
+    messagingSenderId: "954915937614",
+    appId: "1:954915937614:web:aaf6f9a78908d4c384921f"
+  };
+  Promise.all([
+    import(BASE + 'firebase-app.js'),
+    import(BASE + 'firebase-auth.js'),
+    import(BASE + 'firebase-firestore.js')
+  ]).then(function(m){
+    var A = m[0], Au = m[1], F = m[2];
+    var app = A.initializeApp(firebaseConfig);
+    var auth = Au.getAuth(app);
+    var db;
+    try{   // offline-capable cache (works across tabs); falls back to a plain connection if the browser blocks it
+      db = F.initializeFirestore(app, { localCache: F.persistentLocalCache({ tabManager: F.persistentMultipleTabManager() }) });
+    }catch(e){ db = F.getFirestore(app); }
+
+    var currentUser = null, known;
+    var knownPromise = new Promise(function(r){ known = r; });
+    Au.onAuthStateChanged(auth, function(u){
+      currentUser = u;
+      known(u);
+      window.dispatchEvent(new CustomEvent('yp-auth', { detail: u }));
+    });
+
+    function ref(){ return F.doc(db, 'users', currentUser.uid, 'planner', 'data'); }
+
+    window.ypCloud = {
+      authKnown: knownPromise,
+      user: function(){ return currentUser; },
+      signUp: function(email, password){
+        return Au.createUserWithEmailAndPassword(auth, email, password).then(function(r){ return r.user; });
+      },
+      signIn: function(email, password){
+        return Au.signInWithEmailAndPassword(auth, email, password).then(function(r){ return r.user; });
+      },
+      resetPassword: function(email){ return Au.sendPasswordResetEmail(auth, email); },
+      signOut: function(){ return Au.signOut(auth); },
+      // resolves to {json, savedAt} or null when nothing is stored yet; rejects if unreachable and not cached
+      load: function(){ return F.getDoc(ref()).then(function(snap){ return snap.exists() ? snap.data() : null; }); },
+      // with the offline cache this is queued on the device right away and sent when online
+      save: function(json, savedAt){ return F.setDoc(ref(), { json: json, savedAt: savedAt, updatedAt: Date.now() }); }
+    };
+    window.dispatchEvent(new Event('yp-cloud-ready'));
+  }).catch(function(e){
+    window.ypCloudFailed = true;
+    window.dispatchEvent(new Event('yp-cloud-failed'));
+  });
+})();
+</script>
 <style>
   :root{
     --ink:#0B2540;
@@ -441,6 +503,20 @@
     display:flex;align-items:center;justify-content:center;padding:20px;
   }
   #onboarding.hidden{display:none;}
+  #auth-screen{
+    position:fixed;inset:0;z-index:10050;background:var(--parchment);overflow-y:auto;
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  #auth-screen.hidden{display:none;}
+  #auth-screen .auth-tabs{display:flex;gap:6px;margin-bottom:20px;background:var(--parchment);padding:4px;border-radius:10px;}
+  #auth-screen .auth-tabs button{
+    all:unset;cursor:pointer;flex:1;text-align:center;padding:9px 8px;border-radius:8px;
+    font-size:14px;font-weight:600;color:var(--muted);
+  }
+  #auth-screen .auth-tabs button.active{background:var(--crimson);color:#fff;}
+  #auth-screen .auth-link{all:unset;cursor:pointer;font-size:13px;color:var(--cobalt);text-decoration:underline;}
+  #auth-screen .ob-btn:disabled{opacity:.6;cursor:default;}
+  #auth-screen .auth-ok{color:var(--moss);font-size:13px;margin:-8px 0 14px 0;min-height:14px;}
   .ob-card{
     width:100%;max-width:440px;background:var(--paper);border:1px solid var(--sand);
     border-radius:16px;padding:32px 30px;box-shadow:0 20px 50px rgba(11,37,64,0.15);
@@ -947,7 +1023,7 @@
 <div id="landing">
   <div class="ld-nav">
     <div class="ld-logo"><span class="ld-mark"><svg viewBox="0 0 512 512" aria-hidden="true"><use href="#yp-logo"/></svg></span> Year Planner</div>
-    <button class="ld-cta" id="ld-cta-top">Launch planner</button>
+    <button class="ld-cta" id="ld-cta-top">Sign in</button>
   </div>
 
   <div class="ld-hero">
@@ -955,7 +1031,7 @@
     <h1>Plan your whole year, <span>one goal at a time.</span></h1>
     <p>Ten big goals, four quarters, twelve months, fifty-two weeks — broken down into real steps, tracked with visuals, and backed up by reminders so nothing slips through.</p>
     <div class="ld-hero-actions">
-      <button class="ld-btn-primary" id="ld-cta-main">Launch my planner →</button>
+      <button class="ld-btn-primary" id="ld-cta-main">Create my account →</button>
       <button class="ld-btn-secondary" id="ld-cta-learn">See what's inside</button>
     </div>
   </div>
@@ -965,7 +1041,7 @@
       <div class="ring" style="--pct:64"><div class="ring-inner"><div class="pct">64%</div><div class="pct-lbl">ON TRACK</div></div></div>
       <div class="ld-pc-text">
         <h3>Everything lives in one place</h3>
-        <p>Goals, quarterly check-ins, monthly spreads, weekly plans, habit tracking and a full analysis dashboard — all saved privately in your own browser.</p>
+        <p>Goals, quarterly check-ins, monthly spreads, weekly plans, habit tracking and a full analysis dashboard — all saved securely to your own account and synced across your devices.</p>
       </div>
     </div>
   </div>
@@ -988,9 +1064,9 @@
   <div class="ld-cta-band">
     <h2>Ready to plan the year properly?</h2>
     <p>It takes a minute to set up, and everything saves automatically as you go.</p>
-    <button class="ld-btn-primary" id="ld-cta-bottom">Launch my planner →</button>
+    <button class="ld-btn-primary" id="ld-cta-bottom">Create my account →</button>
   </div>
-  <div class="ld-foot">Your planning data stays saved locally in this browser.<span class="ld-copyright">© 2026 Anteneh Nigatu</span></div>
+  <div class="ld-foot">Your planning data is saved to your account and still works offline.<span class="ld-copyright">© 2026 Anteneh Nigatu</span></div>
 </div>
 
 <!-- ================= Splash / starter page ================= -->
@@ -1003,6 +1079,9 @@
 
 <!-- ================= Onboarding overlay ================= -->
 <div id="onboarding" class="hidden"></div>
+
+<!-- ================= Sign in / create account ================= -->
+<div id="auth-screen" class="hidden"></div>
 
 <!-- ================= Install banner (shown when someone visits) ================= -->
 <div id="install-banner" role="region" aria-label="Install Year Planner" aria-hidden="true">
@@ -1168,7 +1247,13 @@ const QUARTERS = [
   {label:'Q3', focus:'March, April, May'},
   {label:'Q4', focus:'June, July, August'},
 ];
-const STORAGE_KEY = 'year-planner-data';
+const LEGACY_KEY = 'year-planner-data';          // data saved before accounts existed
+const BACKUP_KEY = 'year-planner-pre-login-backup';
+const LAST_UID_KEY = 'yp-last-uid';
+let STORAGE_KEY = LEGACY_KEY;                    // becomes 'year-planner-data:<uid>' after sign-in
+let TS_KEY = 'yp-saved-at';
+let cloudUser = null;                            // the signed-in user (null = not signed in / offline fallback)
+let lastSavedAt = 0, savePending = false, cloudDirty = false, cloudInFlight = 0, cloudTimer = null, lastPull = 0;
 
 function emptyGoal(){
   return {
@@ -1229,7 +1314,7 @@ let state = defaultState();
 let view = {tab:'overview', index:0};
 let saveTimer = null;
 
-/* ---------------- Persistence (localStorage — saves permanently in this browser) ---------------- */
+/* ---------------- Persistence (this device's copy + Firebase cloud copy) ---------------- */
 function loadState(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -1247,19 +1332,123 @@ function loadState(){
   applyDefaultTimerDuration();
   loadStoredFiles();
 }
-function scheduleSave(){
+function setIndicator(text, clearAfter){
   const ind = document.getElementById('save-indicator');
-  if(ind) ind.textContent = 'Saving…';
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(()=>{
-    try{
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      if(ind) ind.textContent = 'Saved to this browser';
-      setTimeout(()=>{ if(ind && ind.textContent==='Saved to this browser') ind.textContent=''; }, 2500);
-    }catch(e){
-      if(ind) ind.textContent = 'Could not save — storage may be full or blocked';
+  if(!ind) return;
+  ind.textContent = text;
+  if(clearAfter){ setTimeout(()=>{ if(ind.textContent===text) ind.textContent=''; }, clearAfter); }
+}
+function doSave(){
+  savePending = false;
+  try{
+    lastSavedAt = Date.now();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try{ localStorage.setItem(TS_KEY, String(lastSavedAt)); }catch(e){}
+    if(cloudUser && window.ypCloud){
+      cloudDirty = true;
+      setIndicator(navigator.onLine ? 'Saving to cloud…' : 'Saved on this device — will sync when online');
+      clearTimeout(cloudTimer);
+      cloudTimer = setTimeout(pushToCloud, 1500);
+    } else {
+      setIndicator('Saved on this device', 2500);
     }
-  }, 400);
+  }catch(e){
+    setIndicator('Could not save — storage may be full or blocked');
+  }
+}
+function scheduleSave(){
+  setIndicator('Saving…');
+  savePending = true;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(doSave, 400);
+}
+function pushToCloud(){
+  if(!cloudUser || !window.ypCloud) return;
+  cloudDirty = false;
+  let json = null;
+  try{ json = localStorage.getItem(STORAGE_KEY); }catch(e){}
+  if(!json) return;
+  cloudInFlight++;
+  window.ypCloud.save(json, lastSavedAt).then(()=>{
+    cloudInFlight--;
+    if(!cloudDirty && !savePending && cloudInFlight===0) setIndicator('Saved to cloud ☁', 2500);
+  }).catch(()=>{
+    cloudInFlight--;
+    setIndicator('Cloud sync failed — will retry on next change');
+  });
+}
+/* Make sure the latest edit is stored when the tab is hidden or closed. */
+function flushNow(){
+  if(savePending){ clearTimeout(saveTimer); doSave(); }
+  if(cloudDirty){ clearTimeout(cloudTimer); pushToCloud(); }
+}
+/* When coming back to the app, pick up changes made on another device. */
+async function syncFromCloud(){
+  if(!cloudUser || !window.ypCloud || cloudDirty || savePending || cloudInFlight) return;
+  if(Date.now() - lastPull < 30000) return;
+  lastPull = Date.now();
+  try{
+    const remote = await window.ypCloud.load();
+    if(!remote || !(remote.savedAt > lastSavedAt) || cloudDirty || savePending) return;
+    const ae = document.activeElement;
+    if(ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA')) return;
+    const loaded = JSON.parse(remote.json);
+    state = Object.assign(defaultState(), loaded);
+    state.settings = Object.assign(defaultState().settings, loaded.settings || {});
+    lastSavedAt = remote.savedAt;
+    try{ localStorage.setItem(STORAGE_KEY, remote.json); localStorage.setItem(TS_KEY, String(lastSavedAt)); }catch(e){}
+    render();
+    applyTheme(state.settings.theme);
+    updateTopbarAvatar();
+  }catch(e){ /* offline or unreachable — keep working locally */ }
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='hidden') flushNow(); else syncFromCloud();
+});
+window.addEventListener('pagehide', flushNow);
+window.addEventListener('online', ()=>{ if(cloudUser && lastSavedAt){ cloudDirty = true; pushToCloud(); } });
+
+function withTimeout(promise, ms){
+  return new Promise((resolve, reject)=>{
+    const t = setTimeout(()=>reject(new Error('timeout')), ms);
+    promise.then(v=>{ clearTimeout(t); resolve(v); }, e=>{ clearTimeout(t); reject(e); });
+  });
+}
+/* After sign-in: choose between this device's copy and the cloud copy (newest wins),
+   move any pre-login data into the account once, then let loadState() read the result. */
+async function prepareCloudData(user){
+  cloudUser = user;
+  STORAGE_KEY = LEGACY_KEY + ':' + user.uid;
+  TS_KEY = 'yp-saved-at:' + user.uid;
+  try{ localStorage.setItem(LAST_UID_KEY, user.uid); }catch(e){}
+
+  let localRaw = null, localTs = 0, legacy = null;
+  try{
+    localRaw = localStorage.getItem(STORAGE_KEY);
+    localTs = parseInt(localStorage.getItem(TS_KEY), 10) || 0;
+    legacy = localStorage.getItem(LEGACY_KEY);
+  }catch(e){}
+
+  let remote;                                   // object = found, null = nothing stored yet, undefined = unreachable
+  try{ remote = await withTimeout(window.ypCloud.load(), 8000); }catch(e){ remote = undefined; }
+
+  let pushNeeded = false;
+  if(remote){
+    if(!localRaw || remote.savedAt >= localTs){
+      try{ localStorage.setItem(STORAGE_KEY, remote.json); }catch(e){}
+      localTs = remote.savedAt || Date.now();
+    } else {
+      pushNeeded = true;                        // this device has newer edits made while offline
+    }
+  } else if(remote === null){
+    if(!localRaw && legacy){ localRaw = legacy; try{ localStorage.setItem(STORAGE_KEY, legacy); }catch(e){} localTs = Date.now(); }
+    if(localRaw) pushNeeded = true;
+  }
+  // pre-login data is now either moved into the account or kept as a backup — never shown to the next user
+  if(legacy){ try{ localStorage.setItem(BACKUP_KEY, legacy); localStorage.removeItem(LEGACY_KEY); }catch(e){} }
+  lastSavedAt = localTs;
+  try{ localStorage.setItem(TS_KEY, String(localTs)); }catch(e){}
+  if(pushNeeded){ cloudDirty = true; pushToCloud(); }
 }
 
 /* ---------------- Path helpers ---------------- */
@@ -1307,7 +1496,7 @@ function renderNav(){
       <span class="nav-icon">${t.icon}</span><span class="nav-label">${t.label}</span>${t.count?`<span class="count">${t.count}</span>`:''}
     </button>`).join('');
   nav.querySelectorAll('button').forEach(b=>{
-    b.addEventListener('click', ()=>{ view = {tab:b.dataset.tab, index:0}; render(); });
+    b.addEventListener('click', ()=>{ view = {tab:b.dataset.tab, index:defaultIndexForTab(b.dataset.tab)}; render(); });
   });
 
   const sub = document.getElementById('substrip');
@@ -1359,6 +1548,31 @@ function renderHeader(){
     eyebrow.textContent = 'Insights';
     title.textContent = 'Analysis & progress';
   }
+}
+
+/* The planner year runs September → August (Q1 = Sep–Nov). Weeks start on Monday (ISO). */
+function mondayOf(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x;
+}
+function currentWeekIndex(){
+  const now = new Date();
+  const startYear = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  const week1 = mondayOf(new Date(startYear, 8, 1));      // the week that contains 1 September
+  const idx = Math.round((mondayOf(now) - week1) / (7 * 24 * 3600 * 1000));
+  return Math.max(0, Math.min(51, idx));
+}
+function currentQuarterIndex(){
+  const i = currentMonthIndex();
+  return i === null ? 0 : MONTHS[i].q;
+}
+/* Which item to open first when a tab is clicked */
+function defaultIndexForTab(tab){
+  if(tab === 'months'){ const i = currentMonthIndex(); return i === null ? 0 : i; }
+  if(tab === 'quarters') return currentQuarterIndex();
+  if(tab === 'weekly') return currentWeekIndex();
+  return 0;
 }
 
 function currentMonthIndex(){
@@ -1513,7 +1727,7 @@ function renderGoal(i){
   g.weeks.forEach((w,wi)=>{
     const wb = `${base}.weeks.${wi}`;
     html += `<div class="week-cell">
-      <div class="checkline">${fCheck(wb+'.done', w.done)}<strong>Wk ${wi+1}</strong></div>
+      <div class="checkline">${fCheck(wb+'.done', w.done)}<strong>Mon ${wi+1}</strong></div>
       ${fInput(wb+'.note', w.note, 'what did you do?')}
     </div>`;
   });
@@ -2168,11 +2382,24 @@ function renderAccount(){
     <div class="acc-row"><span class="acc-lbl">Email</span><span class="acc-val">${esc(ob.email || '—')}</span></div>
     <div class="acc-row"><span class="acc-lbl">Phone</span><span class="acc-val">${esc(ob.phone || '—')}</span></div>
     <div class="acc-row"><span class="acc-lbl">Planning year</span><span class="acc-val">${esc(state.year || '—')}</span></div>
+    ${cloudUser ? `<div class="acc-row"><span class="acc-lbl">Signed in as</span><span class="acc-val">${esc(cloudUser.email || 'Signed in')}</span></div>` : ''}
     <div style="margin-top:14px;">${typeof ypInstallCardHtml === 'function' ? ypInstallCardHtml() : ''}</div>
     <div class="acc-actions">
       <button class="btn-plain" id="acc-edit">Edit details</button>
+      ${cloudUser ? '<button class="btn-plain" id="acc-signout">Sign out</button>' : ''}
     </div>`;
   document.getElementById('acc-edit').addEventListener('click', ()=>{ accEditing=true; renderAccount(); });
+  const so = document.getElementById('acc-signout');
+  if(so) so.addEventListener('click', ()=>{
+    customConfirm('Sign out on this device? Your planner stays saved in your account and will be here when you sign back in.', ()=>{
+      signingOut = true;
+      flushNow();
+      window.ypCloud.signOut().then(()=>{
+        try{ localStorage.removeItem(LAST_UID_KEY); }catch(e){}
+        location.reload();
+      }).catch(()=>{ signingOut = false; customAlert('Could not sign out. Please try again.', 'Sign-out failed', '⚠️'); });
+    }, 'Sign out?');
+  });
   wireAvatarPicker();
   if(typeof ypWireInstall === 'function') ypWireInstall(el);
 }
@@ -2746,11 +2973,107 @@ function hideLanding(){
   document.getElementById('landing').classList.add('hide');
   if(window.ypSyncInstallBanner) window.ypSyncInstallBanner();
 }
-function launchApp(){
-  hideLanding();
-  setTimeout(startApp, 900);
+let authMode = 'signup';        // 'signup' | 'login' | 'reset'
+let signupName = '';
+function authErrorText(e){
+  const c = e && e.code;
+  if(c==='auth/email-already-in-use') return 'An account with this email already exists. Try signing in instead.';
+  if(c==='auth/invalid-email') return 'Please enter a valid email address.';
+  if(c==='auth/weak-password') return 'Password is too weak — use at least 6 characters.';
+  if(c==='auth/invalid-credential' || c==='auth/wrong-password' || c==='auth/user-not-found' || c==='auth/invalid-login-credentials') return 'Email or password is incorrect.';
+  if(c==='auth/too-many-requests') return 'Too many attempts. Please wait a few minutes and try again.';
+  if(c==='auth/network-request-failed') return 'No internet connection. Please connect and try again.';
+  if(c==='auth/operation-not-allowed') return 'Email/password sign-in is not turned on in Firebase yet.';
+  if(c==='auth/configuration-not-found') return 'Sign-in is not set up in Firebase yet. In the Firebase console open Authentication and click "Get started", then turn on Email/Password.';
+  if(c==='auth/admin-restricted-operation') return 'Creating new accounts is turned off in Firebase (check Authentication → Settings → User actions).';
+  if(c==='auth/api-key-not-valid.-please-pass-a-valid-api-key.' || c==='auth/invalid-api-key') return 'The Firebase API key was rejected. Check that the firebaseConfig in index.html matches your project.';
+  if(c==='auth/unauthorized-domain') return 'This website address is not allowed yet. Add it under Authentication → Settings → Authorized domains.';
+  try{ console.error('Auth error:', e); }catch(_){}
+  return 'Something went wrong' + (c ? ' (' + c + ')' : (e && e.message ? ' (' + e.message + ')' : '')) + '. Please try again.';
 }
-document.getElementById('ld-cta-top').addEventListener('click', launchApp);
+function openAuth(mode){
+  authMode = mode || 'signup';
+  renderAuth();
+  document.getElementById('auth-screen').classList.remove('hidden');
+}
+function closeAuth(){ document.getElementById('auth-screen').classList.add('hidden'); }
+function renderAuth(){
+  const el = document.getElementById('auth-screen');
+  const signup = authMode==='signup', reset = authMode==='reset';
+  const tabs = reset ? '' : `<div class="auth-tabs">
+      <button id="auth-tab-signup" class="${signup?'active':''}">Create account</button>
+      <button id="auth-tab-login" class="${!signup?'active':''}">Sign in</button></div>`;
+  const title = reset ? 'Reset your password' : (signup ? 'Create your account' : 'Welcome back');
+  const copy = reset ? 'Enter your email and we\'ll send you a link to choose a new password.'
+             : (signup ? 'Your planner is saved to your account, so you can open it on any device.'
+                       : 'Sign in to open your planner.');
+  el.innerHTML = `<div class="ob-card">
+    <div class="ob-emoji">${reset?'🔑':'🗓️'}</div>
+    ${tabs}
+    <h2>${title}</h2>
+    <p class="ob-copy">${copy}</p>
+    ${signup ? '<div class="field"><input class="f-input" id="auth-name" placeholder="Your name (optional)" autocomplete="name"></div>' : ''}
+    <div class="field"><input class="f-input" id="auth-email" type="email" placeholder="Email" autocomplete="email"></div>
+    ${reset ? '' : `<div class="field"><input class="f-input" id="auth-pass" type="password" placeholder="Password${signup?' (at least 6 characters)':''}" autocomplete="${signup?'new-password':'current-password'}"></div>`}
+    ${signup ? '<div class="field"><input class="f-input" id="auth-pass2" type="password" placeholder="Repeat password" autocomplete="new-password"></div>' : ''}
+    <div class="ob-err" id="auth-err"></div>
+    <div class="auth-ok" id="auth-ok"></div>
+    <div class="ob-actions">
+      <button class="ob-btn ghost" id="auth-back">${reset?'Back to sign in':'Cancel'}</button>
+      <button class="ob-btn" id="auth-submit">${reset?'Send reset link':(signup?'Create account':'Sign in')}</button>
+    </div>
+    ${authMode==='login' ? '<div style="margin-top:14px;text-align:center;"><button class="auth-link" id="auth-forgot">Forgot password?</button></div>' : ''}
+  </div>`;
+  const $ = id => document.getElementById(id);
+  if($('auth-tab-signup')) $('auth-tab-signup').addEventListener('click', ()=>{ authMode='signup'; renderAuth(); });
+  if($('auth-tab-login')) $('auth-tab-login').addEventListener('click', ()=>{ authMode='login'; renderAuth(); });
+  if($('auth-forgot')) $('auth-forgot').addEventListener('click', ()=>{ authMode='reset'; renderAuth(); });
+  $('auth-back').addEventListener('click', ()=>{ if(reset){ authMode='login'; renderAuth(); } else closeAuth(); });
+  $('auth-submit').addEventListener('click', submitAuth);
+  el.querySelectorAll('input').forEach(i=>i.addEventListener('keydown', e=>{ if(e.key==='Enter') submitAuth(); }));
+  const first = $('auth-name') || $('auth-email'); if(first) first.focus();
+}
+async function submitAuth(){
+  const cloud = window.ypCloud;
+  const $ = id => document.getElementById(id);
+  const err = $('auth-err'), ok = $('auth-ok'), btn = $('auth-submit');
+  err.textContent = ''; ok.textContent = '';
+  if(!cloud){ err.textContent = 'No connection to the account service yet. Please connect to the internet and try again.'; return; }
+  const email = ($('auth-email').value || '').trim();
+  if(!/^\S+@\S+\.\S+$/.test(email)){ err.textContent = 'Please enter a valid email address.'; return; }
+  if(authMode==='reset'){
+    btn.disabled = true;
+    try{ await cloud.resetPassword(email); ok.textContent = 'If an account exists for that email, a reset link is on its way. Check your inbox and spam folder.'; }
+    catch(e){ err.textContent = authErrorText(e); }
+    btn.disabled = false;
+    return;
+  }
+  const pass = $('auth-pass').value;
+  if(authMode==='signup'){
+    if(pass.length < 6){ err.textContent = 'Password must be at least 6 characters.'; return; }
+    if(pass !== $('auth-pass2').value){ err.textContent = 'The two passwords do not match.'; return; }
+    signupName = ($('auth-name').value || '').trim();
+  } else if(!pass){ err.textContent = 'Please enter your password.'; return; }
+  btn.disabled = true;
+  try{
+    const user = authMode==='signup' ? await cloud.signUp(email, pass) : await cloud.signIn(email, pass);
+    closeAuth();
+    hideLanding();
+    setTimeout(startApp, 900);
+  }catch(e){
+    err.textContent = authErrorText(e);
+    btn.disabled = false;
+  }
+}
+function launchApp(){
+  if(window.ypCloud && window.ypCloud.user()){ hideLanding(); setTimeout(startApp, 900); return; }
+  if(!window.ypCloud){
+    customAlert('Creating an account or signing in needs an internet connection the first time. Please connect and try again.', 'Can\'t reach the account service', '📶');
+    return;
+  }
+  openAuth('signup');
+}
+document.getElementById('ld-cta-top').addEventListener('click', ()=>{ if(window.ypCloud && window.ypCloud.user()) launchApp(); else if(window.ypCloud) openAuth('login'); else launchApp(); });
 document.getElementById('ld-cta-main').addEventListener('click', launchApp);
 document.getElementById('ld-cta-bottom').addEventListener('click', launchApp);
 document.getElementById('ld-cta-learn').addEventListener('click', ()=>{
@@ -2764,10 +3087,19 @@ function hideSplash(){
   const splash = document.getElementById('splash');
   if(splash) splash.classList.add('hide');
 }
-function startApp(){
+let appStarted = false;
+async function startApp(){
+  if(appStarted) return;
+  appStarted = true;
+  const u = window.ypCloud && window.ypCloud.user ? window.ypCloud.user() : null;
+  if(u) await prepareCloudData(u);
   loadState();
   hideSplash();
   if(!state.onboarding || !state.onboarding.done){
+    if(u){                                   // pre-fill the setup questions from the new account
+      if(!obDraft.name) obDraft.name = signupName || u.displayName || '';
+      if(!obDraft.email) obDraft.email = u.email || '';
+    }
     document.getElementById('onboarding').classList.remove('hidden');
     obStep = 0;
     renderOnboarding();
@@ -2778,21 +3110,48 @@ function startApp(){
   setInterval(checkDeadlinesAndNotify, 30*60*1000);
 }
 
-/* Skip the landing page entirely for a returning, already-logged-in user. */
+/* Returning users skip the landing page: wait for Firebase to confirm who is signed in.
+   If Firebase can't load (offline and never cached), fall back to this device's saved copy. */
 (function initialRouting(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      const loaded = JSON.parse(raw);
-      if(loaded && loaded.onboarding && loaded.onboarding.done){
-        const landingEl = document.getElementById('landing');
+  let lastUid = null;
+  try{ lastUid = localStorage.getItem(LAST_UID_KEY); }catch(e){}
+  const landingEl = document.getElementById('landing');
+  if(lastUid && landingEl) landingEl.style.display = 'none';     // avoid a flash of the landing page
+  let settled = false;
+
+  function localFallback(){
+    if(settled || !lastUid) return;
+    let raw = null;
+    try{ raw = localStorage.getItem(LEGACY_KEY + ':' + lastUid); }catch(e){}
+    if(!raw) return;
+    settled = true;
+    STORAGE_KEY = LEGACY_KEY + ':' + lastUid;
+    TS_KEY = 'yp-saved-at:' + lastUid;
+    try{ lastSavedAt = parseInt(localStorage.getItem(TS_KEY), 10) || 0; }catch(e){}
+    startApp();
+  }
+  function boot(){
+    window.ypCloud.authKnown.then(u=>{
+      if(settled) return;
+      settled = true;
+      if(u){
         if(landingEl) landingEl.style.display = 'none';
-        setTimeout(startApp, 500);
-        return;
+        setTimeout(startApp, 300);
+      } else {
+        try{ localStorage.removeItem(LAST_UID_KEY); }catch(e){}
+        if(landingEl){ landingEl.style.display = ''; landingEl.classList.remove('hide'); }
+        hideSplash();
       }
-    }
-  }catch(e){ /* no valid saved data — fall through to the landing page */ }
+    });
+  }
+  if(window.ypCloud) boot(); else window.addEventListener('yp-cloud-ready', boot, {once:true});
+  if(window.ypCloudFailed) localFallback(); else window.addEventListener('yp-cloud-failed', localFallback, {once:true});
+  setTimeout(localFallback, 6000);          // Firebase is taking too long (weak connection)
+
+  // signed out from another tab / device → return to the landing page
+  window.addEventListener('yp-auth', (e)=>{ if(appStarted && !e.detail && !signingOut) location.reload(); });
 })();
+let signingOut = false;
 </script>
 
 <script>
